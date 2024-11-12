@@ -1,17 +1,7 @@
-'''
-People
-Posts
-Companies
-Groups
-Jobs
-Products
-Services
-Events
-Courses
-Schools
-All filters
-'''
 
+from dotenv import load_dotenv
+load_dotenv()
+import os
 import time
 import csv
 import pickle
@@ -26,9 +16,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # Constants for login and search term
-USER_NAME = "kishorenand7870@protonmail.com"
-PASSWORD = "Nand@321"
-SEARCH_TERM = '''"Nand Kishore" + "Latest"'''
+USER_NAME = os.environ.get("USER_NAME")
+PASSWORD = os.environ.get("PASSWORD")
+SEARCH_TERM = os.environ.get("SEARCH_TERM")
+
 
 # Define flagged keywords for different violation categories
 HATE_SPEECH_KEYWORDS = ["racist", "bigotry", "hate speech", "xenophobia", "discrimination", "hateful"]
@@ -75,7 +66,7 @@ filter_buttons = WebDriverWait(driver, 10).until(
     EC.presence_of_all_elements_located((By.CLASS_NAME, "search-reusables__filter-pill-button"))
 )
 for button in filter_buttons:
-    if button.text.strip() == "Posts": #replace with People and another filter mentioned top button
+    if button.text.strip() == os.environ.get("FILTER_DATA"): #replace with People and another filter mentioned top button
         button.click()
         break
 
