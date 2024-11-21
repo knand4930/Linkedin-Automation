@@ -1,12 +1,12 @@
-
+import pyperclip
 from dotenv import load_dotenv
-load_dotenv()
 import os
 import time
 import csv
 import pickle
 import random
 from selenium import webdriver
+from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
@@ -14,68 +14,78 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+load_dotenv()
 
-# Constants for login and search term
 USER_NAME = os.environ.get("USER_NAME")
 PASSWORD = os.environ.get("PASSWORD")
-SEARCH_TERM = os.environ.get("SEARCH_TERM")
+SEARCH_TERM = '''"you won"'''
+FILTER_DATA=os.environ.get("FILTER_DATA")
 
-
-# Define flagged keywords for different violation categories
 HATE_SPEECH_KEYWORDS = ["racist", "bigotry", "hate speech", "xenophobia", "discrimination", "hateful"]
-SPAM_KEYWORDS = ["free", "win", "offer", "limited time", "claim your prize", "click here", "discount"]
+SPAM_KEYWORDS = ["free", "win", "won", "offer", "limited time", "claim your prize", "click here", "discount"]
 MISINFORMATION_KEYWORDS = ["fake news", "misleading", "conspiracy theory", "false claim", "unverified"]
 INAPPROPRIATE_CONTENT_KEYWORDS = ["nude", "sex", "pornography", "graphic", "violence", "abuse"]
 
-# Configure Chrome options
+
+def check_policy_violation(description):
+
+    if any(keyword.lower() in description.lower() for keyword in HATE_SPEECH_KEYWORDS):
+        return True
+
+    if any(keyword.lower() in description.lower() for keyword in SPAM_KEYWORDS):
+        return True
+
+    if any(keyword.lower() in description.lower() for keyword in MISINFORMATION_KEYWORDS):
+        return True
+
+    if any(keyword.lower() in description.lower() for keyword in INAPPROPRIATE_CONTENT_KEYWORDS):
+        return True
+
+    return False
+
 options = Options()
 options.add_argument("--start-maximized")
-# Uncomment if incognito mode is preferred
-# options.add_argument("--incognito")
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-# Load LinkedIn login page
 driver.get("https://www.linkedin.com/login")
 
-# Load cookies if available to bypass login
 try:
     with open('cookies.pkl', 'rb') as file:
         cookies = pickle.load(file)
         for cookie in cookies:
             driver.add_cookie(cookie)
-    driver.refresh()  # Refresh to use loaded cookies
+    driver.refresh()
 except FileNotFoundError:
-    # Enter credentials and login if cookies are unavailable
     driver.find_element(By.ID, "username").send_keys(USER_NAME)
     driver.find_element(By.ID, "password").send_keys(PASSWORD)
     driver.find_element(By.ID, "password").send_keys(Keys.RETURN)
-    # Save cookies for future use
     with open('cookies.pkl', 'wb') as file:
         pickle.dump(driver.get_cookies(), file)
 
-# Perform a search
 WebDriverWait(driver, 10).until(
     EC.presence_of_element_located((By.CLASS_NAME, "search-global-typeahead__input"))
 ).send_keys(SEARCH_TERM, Keys.RETURN)
 
-# Wait for search results to load
 time.sleep(random.uniform(5, 10))
 
-# Click on the "Posts" filter
 filter_buttons = WebDriverWait(driver, 10).until(
     EC.presence_of_all_elements_located((By.CLASS_NAME, "search-reusables__filter-pill-button"))
 )
 for button in filter_buttons:
-    if button.text.strip() == os.environ.get("FILTER_DATA"): #replace with People and another filter mentioned top button
+    if button.text.strip() == FILTER_DATA:
         button.click()
         break
 
-# Open CSV file for writing
-with open('linkedin_user_data.csv', mode='w', newline='', encoding='utf-8') as csv_file:
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["Name", "Profile Link", "Description"])  # Write header row
+with open('linkedin_user_data.csv', mode='w', newline='', encoding='utf-8') as csv_file, \
+     open('report_post.csv', mode='a', newline='', encoding='utf-8') as report_file:
 
-    # Scroll and extract user details
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(["Name", "Profile Link", "Description"])
+
+    report_writer = csv.writer(report_file)
+    report_writer.writerow(['Name', 'Profile Link', 'Post Link', 'Description', 'Matched Keywords', 'Reason to Report', "Details"])
+
+
     try:
         while True:
             users = WebDriverWait(driver, 10).until(
@@ -83,130 +93,152 @@ with open('linkedin_user_data.csv', mode='w', newline='', encoding='utf-8') as c
             )
             for user in users:
                 try:
-                    # Extract user details
                     name = user.find_element(By.CLASS_NAME, "update-components-actor__name").text
                     profile_link = user.find_element(By.CLASS_NAME, "update-components-actor__meta-link").get_attribute("href")
                     description = user.find_element(By.CLASS_NAME, "update-components-actor__description").text
 
-                    # Write user data to CSV
                     csv_writer.writerow([name, profile_link, description])
 
-                    # Check for policy violations
                     if check_policy_violation(description):
-                        print(f"Flagged post by {name}: {description}")
 
-                        # Ask for manual confirmation before reporting
-                        user_input = input(f"Do you want to report this post (y/n)? Description: {description}\n")
-                        if user_input.lower() == 'y':
-                            # Report the post if confirmed by the user
-                            report_button = user.find_element(By.CLASS_NAME, "update-components-actor__more-options")
-                            report_button.click()
 
-                            # Wait for the report menu to appear
-                            time.sleep(random.uniform(2, 4))
+                        matched_keywords = [kw for kw in
+                                            HATE_SPEECH_KEYWORDS + SPAM_KEYWORDS + MISINFORMATION_KEYWORDS + INAPPROPRIATE_CONTENT_KEYWORDS
+                                            if kw.lower() in description.lower()]
 
-                            # Click the 'Report' option
-                            report_option = WebDriverWait(driver, 10).until(
-                                EC.element_to_be_clickable((By.XPATH, "//span[text()='Report']"))
+                        reason_to_report = None
+                        if any(kw in description.lower() for kw in SPAM_KEYWORDS):
+                            reason_to_report = "Spam"
+                        elif any(kw in description.lower() for kw in HATE_SPEECH_KEYWORDS):
+                            reason_to_report = "Hateful speech"
+                        elif any(kw in description.lower() for kw in MISINFORMATION_KEYWORDS):
+                            reason_to_report = "Misinformation"
+                        elif any(kw in description.lower() for kw in INAPPROPRIATE_CONTENT_KEYWORDS):
+                            reason_to_report = "Sexual content"
+
+
+
+                        time.sleep(10)
+                        unique_name_parts = list(dict.fromkeys(name.split()))
+                        cleaned_name = " ".join(unique_name_parts)
+
+                        flagged_user = cleaned_name
+
+                        try:
+                            control_button = driver.find_element(By.XPATH,
+                                                                 f"//button[contains(@aria-label, 'Open control menu for post by {cleaned_name}')]")
+                            control_button.click()
+                            time.sleep(5)
+
+                            dropdown_content = WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located((By.CLASS_NAME, "artdeco-dropdown__content-inner"))
                             )
-                            report_option.click()
 
-                            # Optionally, select the reason (e.g., 'Spam', 'Inappropriate Content')
-                            time.sleep(random.uniform(2, 4))  # Wait for modal to load
+                            # Get the HTML source of the dropdown content
+                            # dropdown_html = dropdown_content.get_attribute("outerHTML")
+                            # print("Dropdown Content HTML:")
+                            # print(dropdown_html)
 
-                            # Example of selecting a reason (e.g., 'Spam')
-                            spam_option = WebDriverWait(driver, 10).until(
-                                EC.element_to_be_clickable((By.XPATH, "//span[text()='Spam']"))
+
+                            time.sleep(5)
+                            copy_link_option = WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located(
+                                    (By.XPATH, "//h5[text()='Copy link to post']/ancestor::div[@role='button']"))
                             )
-                            spam_option.click()
+                            copy_link_option.click()
 
-                            # Submit the report
-                            submit_button = WebDriverWait(driver, 10).until(
-                                EC.element_to_be_clickable((By.XPATH, "//button[text()='Submit']"))
+                            WebDriverWait(driver, 2)
+
+                            copied_url = pyperclip.paste()
+
+                            time.sleep(5)
+
+                            report_control_button = driver.find_element(By.XPATH,
+                                                                 f"//button[contains(@aria-label, 'Open control menu for post by {cleaned_name}')]")
+                            report_control_button.click()
+
+                            time.sleep(5)
+
+                            report_dropdown_content = WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located((By.CLASS_NAME, "artdeco-dropdown__content-inner"))
                             )
-                            submit_button.click()
 
-                            print("Report submitted.")
+                            report_post_option = WebDriverWait(driver, 10).until(
+                                EC.presence_of_element_located(
+                                    (By.XPATH, "//h5[text()='Report post']/ancestor::div[@role='button']"))
+                            )
+                            report_post_option.click()
 
-                            # Add a delay after reporting to prevent overly aggressive reporting
-                            time.sleep(random.uniform(10, 20))  # Throttle reporting frequency
+                            print(reason_to_report, "reason_to_report")
+
+                            time.sleep(2)
+                            if reason_to_report:
+                                try:
+                                    reason_button = WebDriverWait(driver, 10).until(
+                                        EC.element_to_be_clickable(
+                                            (By.XPATH, f"//button[@aria-label='{reason_to_report}']"))
+                                    )
+
+                                    reason_button.click()
+                                    print("Report button clicked !!")
+                                except Exception as e:
+                                    print(f"Error Report button clicked: {e}")
+
+                                time.sleep(5)
+                                try:
+
+                                    next_button = WebDriverWait(driver, 10).until(
+                                        EC.element_to_be_clickable((By.XPATH, "//button[.//span[text()='Next']]"))
+                                    )
+                                    next_button.click()
+
+                                    print("next button clicked !!")
+                                except Exception as e:
+                                    print(f"Error next button clicked: {e}")
+
+                                try:
+
+                                    checkbox = WebDriverWait(driver, 10).until(
+                                                    EC.element_to_be_clickable((By.ID, "urn:li:fsd_formElement:urn:li:fsd_contentReportingFormElement:notificationsOptIn-0"))
+                                                )
+
+                                    checkbox.click()
+                                    print("Checkbox clicked.")
+                                except Exception as e:
+                                    print(f"Error clicking the checkbox: {e}")
+
+                                try:
+                                    submit_button = WebDriverWait(driver, 10).until(
+                                        EC.element_to_be_clickable((By.XPATH,
+                                                                    "//button[@data-test-trust-button-action-component-button='SUBMIT']"))
+                                    )
+
+                                    submit_button.click()
+                                    print("Submit report button clicked.")
+                                except Exception as e:
+                                    print(f"Error clicking the submit report button: {e}")
+
+                                print(f"Report submitted for {name} with reason: {reason_to_report}")
+
+                                report_data_values = f"Report submitted for {name} with reason: {reason_to_report}"
+
+                                report_writer.writerow(
+                                    [flagged_user, profile_link, copied_url, description, ', '.join(matched_keywords),
+                                     reason_to_report, report_data_values]
+                                )
+
+                            time.sleep(300)
+
+                        except Exception as e:
+                            print(f"Error during reporting: {e}")
+
 
                 except Exception as e:
                     print(f"Error extracting user data: {e}")
 
-            # Scroll down and wait for new content
             driver.execute_script("window.scrollBy(0, window.innerHeight);")
-            time.sleep(random.uniform(5, 10))  # Randomized pause to simulate human behavior
+            time.sleep(random.uniform(5, 10))
     except KeyboardInterrupt:
         print("Scrolling stopped.")
 
-# Close the browser
 driver.quit()
-
-def check_policy_violation(description):
-    """
-    Check if a post description violates LinkedIn's policies based on text content.
-    """
-    # Check for hate speech/harassment
-    if any(keyword.lower() in description.lower() for keyword in HATE_SPEECH_KEYWORDS):
-        return True
-
-    # Check for spam content
-    if any(keyword.lower() in description.lower() for keyword in SPAM_KEYWORDS):
-        return True
-
-    # Check for misinformation
-    if any(keyword.lower() in description.lower() for keyword in MISINFORMATION_KEYWORDS):
-        return True
-
-    # Check for inappropriate content (e.g., nudity, violence)
-    if any(keyword.lower() in description.lower() for keyword in INAPPROPRIATE_CONTENT_KEYWORDS):
-        return True
-
-    # No violations found
-    return False
-
-
-#NLP
-
-# from transformers import pipeline
-# import nltk
-# from nltk.corpus import stopwords
-#
-# # Load a pre-trained sentiment analysis model
-# sentiment_analyzer = pipeline("sentiment-analysis")
-#
-# # Download NLTK stopwords
-# nltk.download('stopwords')
-#
-# def check_policy_violation(description):
-#     """
-#     Check if a post description violates LinkedIn's policies based on text content using NLP.
-#     """
-#     # Perform sentiment analysis on the post description
-#     sentiment = sentiment_analyzer(description)
-#
-#     # If the sentiment is negative (e.g., toxic or harmful content)
-#     if sentiment[0]['label'] == 'NEGATIVE' and sentiment[0]['score'] > 0.8:
-#         return True
-#
-#     # Check for hate speech/harassment
-#     if any(keyword.lower() in description.lower() for keyword in HATE_SPEECH_KEYWORDS):
-#         return True
-#
-#     # Check for spam content
-#     if any(keyword.lower() in description.lower() for keyword in SPAM_KEYWORDS):
-#         return True
-#
-#     # Check for misinformation
-#     if any(keyword.lower() in description.lower() for keyword in MISINFORMATION_KEYWORDS):
-#         return True
-#
-#     # Check for inappropriate content (e.g., nudity, violence)
-#     if any(keyword.lower() in description.lower() for keyword in INAPPROPRIATE_CONTENT_KEYWORDS):
-#         return True
-#
-#     # No violations found
-#     return False
-
-
